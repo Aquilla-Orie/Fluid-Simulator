@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 public class ParticleSimulator : MonoBehaviour
@@ -19,6 +20,9 @@ public class ParticleSimulator : MonoBehaviour
     public float dispersionAmount;
     public Vector3 startVelocity;
     public float smoothingLength;
+    public float restingDensity; // Ideal density for the fluid
+    public float stiffnessConstant;
+    public float viscosityCoefficient;
 
     public float volume = 0.000000299f; // Volume of water molecule 2.99x10^-23
     public float molarMass = 0.018f; // Molar mass of water 18g -> 0.018kg
@@ -27,6 +31,10 @@ public class ParticleSimulator : MonoBehaviour
     public Vector3 boundsSize;
     public Vector3 boundsPosition;
     public float collisionDamping = 1;
+
+    // Grid properties
+    private float cellSize;
+    private Dictionary<Vector3Int, List<int>> grid;
 
     void Start()
     {
@@ -60,10 +68,26 @@ public class ParticleSimulator : MonoBehaviour
                 }
             }
         }
+
+        // Initialize grid
+        cellSize = smoothingLength;
+        grid = new Dictionary<Vector3Int, List<int>>();
     }
 
     void Update()
     {
+        // Clear and update grid
+        grid.Clear();
+        for (int i = 0; i < particleCount; i++)
+        {
+            Vector3Int cell = GetCell(positions[i]);
+            if (!grid.ContainsKey(cell))
+            {
+                grid[cell] = new List<int>();
+            }
+            grid[cell].Add(i);
+        }
+
         UpdateDensity();
         UpdatePressure();
         ComputeForces();
@@ -79,6 +103,15 @@ public class ParticleSimulator : MonoBehaviour
 
             ResolveBoundsCollision(ref positions[i], ref velocities[i]);
         }
+    }
+
+    Vector3Int GetCell(Vector3 position)
+    {
+        return new Vector3Int(
+            Mathf.FloorToInt(position.x / cellSize),
+            Mathf.FloorToInt(position.y / cellSize),
+            Mathf.FloorToInt(position.z / cellSize)
+        );
     }
 
     private void ResolveBoundsCollision(ref Vector3 position, ref Vector3 velocity)
@@ -124,13 +157,29 @@ public class ParticleSimulator : MonoBehaviour
     {
         for (int i = 0; i < particleCount; i++)
         {
-            float density = 0;
-            for (int j = 0; j < particleCount; j++)
+            float density = 0.0f;
+            Vector3Int cell = GetCell(positions[i]);
+
+            // Check current cell and neighboring cells
+            for (int x = -1; x <= 1; x++)
             {
-                float distance = (positions[i] - positions[j]).magnitude;
-                if (distance < smoothingLength)
+                for (int y = -1; y <= 1; y++)
                 {
-                    density += molarMass * SmoothingKernel(smoothingLength, distance);
+                    for (int z = -1; z <= 1; z++)
+                    {
+                        Vector3Int neighborCell = cell + new Vector3Int(x, y, z);
+                        if (grid.ContainsKey(neighborCell))
+                        {
+                            foreach (int j in grid[neighborCell])
+                            {
+                                float distance = (positions[i] - positions[j]).magnitude;
+                                if (distance < smoothingLength)
+                                {
+                                    density += molarMass * SmoothingKernel(smoothingLength, distance);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             densities[i] = density;
@@ -147,9 +196,7 @@ public class ParticleSimulator : MonoBehaviour
 
     private float PressureEquation(float density)
     {
-        float restDensity = 1.0f; // Ideal density for the fluid
-        float k = 1.0f; // stifess constant
-        return k * (density - restDensity); //P = k(p - p0)
+        return stiffnessConstant * (density - restingDensity); //P = k(p - p0)
     }
 
     private void ComputeForces()
@@ -157,26 +204,51 @@ public class ParticleSimulator : MonoBehaviour
         for (int i = 0; i < particleCount; i++)
         {
             Vector3 force = Vector3.zero;
-            for (int j = 0; j < particleCount; j++)
+            Vector3Int cell = GetCell(positions[i]);
+
+            // Check current cell and neighboring cells
+            for (int x = -1; x <= 1; x++)
             {
-                if (i != j)
+                for (int y = -1; y <= 1; y++)
                 {
-                    float distance = (positions[i] - positions[j]).magnitude;
-                    if (distance < smoothingLength)
+                    for (int z = -1; z <= 1; z++)
                     {
-                        Vector3 direction = (positions[j] - positions[i]).normalized;
-                        // Compute pressure
-                        float pressureForce = -(pressures[i] + pressures[j]) / (2.0f * densities[j]) * PressureKernelGradient(smoothingLength, distance);
-                        force += direction * pressureForce;
-                        
-                        // Compute viscosity
-                        float viscosityForce = ViscosityKernelLaplacian(smoothingLength, distance);
-                        force += viscosityForce * (velocities[j] - velocities[i]);
+                        Vector3Int neighborCell = cell + new Vector3Int(x, y, z);
+                        if (grid.ContainsKey(neighborCell))
+                        {
+                            foreach (int j in grid[neighborCell])
+                            {
+                                if (i != j)
+                                {
+                                    float distance = (positions[i] - positions[j]).magnitude;
+                                    if (distance < smoothingLength)
+                                    {
+                                        Vector3 direction = (positions[j] - positions[i]).normalized;
+
+                                        // Pressure force
+                                        float pressureForce = -(pressures[i] + pressures[j]) / (2.0f * densities[j]) * PressureKernelGradient(smoothingLength, distance);
+                                        force += direction * pressureForce;
+
+                                        // Viscosity force
+                                        force += ComputeViscosityForce(i, j, distance);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
-            currentForces[i] = force;
+
+            currentForces[i] = force/* + Vector3.down * gravitationalConstant * densities[i]*/; // Apply gravity
         }
+    }
+
+    Vector3 ComputeViscosityForce(int i, int j, float distance)
+    {
+        Vector3 velocityDiff = velocities[j] - velocities[i];
+        float laplacian = ViscosityKernelLaplacian(smoothingLength, distance);
+        //return viscosityCoefficient * velocityDiff * laplacian / densities[j];
+        return viscosityCoefficient * (velocityDiff / densities[j]) * laplacian;
     }
 
     private float SmoothingKernel(float smoothingLength, float distance)// Poly6 Kernel

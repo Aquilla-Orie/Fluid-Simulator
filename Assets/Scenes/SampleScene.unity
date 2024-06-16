@@ -299,8 +299,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 963194225}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.039929464, y: 0.9501835, z: -0.27715325, w: -0.136905}
-  m_LocalPosition: {x: 5.450774, y: 8.621954, z: 8.642828}
+  m_LocalRotation: {x: -0.004925903, y: 0.9367484, z: -0.34971967, w: -0.01320627}
+  m_LocalPosition: {x: 7.9739227, y: 46.90522, z: 86.4202}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -352,7 +352,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   gravitationalConstant: 9.8
   center: {x: 3, y: 3.5, z: 0}
-  particleCount: 64
+  particleCount: 2000
   pressures: []
   densities: []
   velocities: []
@@ -360,13 +360,16 @@ MonoBehaviour:
   positions: []
   visualizeParticles: 1
   particleSize: 0.14
-  dispersionAmount: 0.62
+  dispersionAmount: 10
   startVelocity: {x: 2, y: 4, z: 5}
-  smoothingLength: 3.7
-  volume: 3.75
-  molarMass: 0.36
-  boundsSize: {x: 3.78, y: 4.29, z: 3.68}
-  boundsPosition: {x: 2.5, y: 3.04, z: 0}
+  smoothingLength: 3
+  restingDensity: 100
+  stiffnessConstant: 3
+  viscosityCoefficient: 1
+  volume: 0.9
+  molarMass: 0.18
+  boundsSize: {x: 100, y: 14.7, z: 100}
+  boundsPosition: {x: 2.5, y: 3.04, z: 2.91}
   collisionDamping: 0.7
 --- !u!1 &1656643063
 GameObject:

@@ -16,6 +16,7 @@ public class ParticleSimulator : MonoBehaviour
     public Vector3[] currentForces;
     public Vector3[] positions;
     public bool visualizeParticles;
+    public bool visualizeGrid;
     public float particleSize;
     public float dispersionAmount;
     public Vector3 startVelocity;
@@ -31,6 +32,9 @@ public class ParticleSimulator : MonoBehaviour
     public Vector3 boundsSize;
     public Vector3 boundsPosition;
     public float collisionDamping = 1;
+
+    [Header("Graphics")]
+    [SerializeField] private MarchingCube marchingCube;
 
     // Grid properties
     private float cellSize;
@@ -76,6 +80,10 @@ public class ParticleSimulator : MonoBehaviour
 
     void Update()
     {
+        marchingCube.ResetParticlePositions();
+
+        cellSize = smoothingLength;
+
         // Clear and update grid
         grid.Clear();
         for (int i = 0; i < particleCount; i++)
@@ -86,7 +94,12 @@ public class ParticleSimulator : MonoBehaviour
                 grid[cell] = new List<int>();
             }
             grid[cell].Add(i);
+
+            marchingCube.SetParticleHeight(positions[i]);
         }
+
+        marchingCube.MarchCubesPosition();
+        marchingCube.SetMesh();
 
         UpdateDensity();
         UpdatePressure();
@@ -294,6 +307,19 @@ public class ParticleSimulator : MonoBehaviour
                 Gizmos.DrawSphere(positions[i], particleSize);
             }
         }
+
+        if (visualizeGrid)
+        {
+            if (grid != null && grid.Count > 0)
+            {
+                foreach (Vector3Int position in grid.Keys)
+                {
+                    Gizmos.color = Color.red;
+                    Gizmos.DrawWireCube(new Vector3(position.x * cellSize, position.y * cellSize, position.z * cellSize), new Vector3(cellSize, cellSize, cellSize));
+                }
+            }
+        }
+       
 
         Gizmos.color = Color.green;
         Gizmos.DrawWireCube(boundsPosition, boundsSize);

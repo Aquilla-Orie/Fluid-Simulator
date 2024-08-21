@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 public class ParticleSimulator : MonoBehaviour
 {
@@ -94,13 +95,11 @@ public class ParticleSimulator : MonoBehaviour
                 grid[cell] = new List<int>();
             }
             grid[cell].Add(i);
-
-            marchingCube.SetParticleHeight(positions[i]);
+            //marchingCube.SetParticleHeight(new Vector3(cell.x * cellSize, cell.y * cellSize, cell.z * cellSize));
+            marchingCube.SetParticleHeight(grid);
         }
-
         marchingCube.MarchCubesPosition();
         marchingCube.SetMesh();
-
         UpdateDensity();
         UpdatePressure();
         ComputeForces();
@@ -125,6 +124,15 @@ public class ParticleSimulator : MonoBehaviour
             Mathf.FloorToInt(position.y / cellSize),
             Mathf.FloorToInt(position.z / cellSize)
         );
+    }
+
+    public Vector3 GetBoundsPosition()
+    {
+        return new Vector3(
+            boundsPosition.x - (boundsSize.x / 2),
+            boundsPosition.y - (boundsSize.y / 2),
+            boundsPosition.z - (boundsSize.z / 2)
+            );
     }
 
     private void ResolveBoundsCollision(ref Vector3 position, ref Vector3 velocity)
@@ -323,5 +331,15 @@ public class ParticleSimulator : MonoBehaviour
 
         Gizmos.color = Color.green;
         Gizmos.DrawWireCube(boundsPosition, boundsSize);
+    }
+
+    public Vector3 GetParticlePosition(int index)
+    {
+        return positions[index];
+    }
+
+    public float GetParticleDensity(int index)
+    {
+        return densities[index];
     }
 }

@@ -151,12 +151,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 076446e215a81f44698bc59312f749f7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _width: 10
-  _height: 10
-  _depth: 10
-  _heightTreshold: 0.5
-  _noiseResolution: 1
-  _visualizeNoise: 0
+  _heightTreshold: 0.01
+  _heightDisparity: 0.5
   _simulator: {fileID: 1497104612}
 --- !u!23 &76769188
 MeshRenderer:
@@ -461,8 +457,8 @@ MonoBehaviour:
   velocities: []
   currentForces: []
   positions: []
-  visualizeParticles: 1
-  visualizeGrid: 1
+  visualizeParticles: 0
+  visualizeGrid: 0
   particleSize: 0.3
   dispersionAmount: 10
   startVelocity: {x: 2, y: 4, z: 5}

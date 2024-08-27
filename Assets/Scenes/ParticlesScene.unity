@@ -151,7 +151,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 076446e215a81f44698bc59312f749f7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _heightTreshold: 0.01
+  _heightTreshold: 0
   _heightDisparity: 0.5
   _simulator: {fileID: 1497104612}
 --- !u!23 &76769188
@@ -214,6 +214,78 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &581485524
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 581485526}
+  - component: {fileID: 581485525}
+  m_Layer: 0
+  m_Name: GPUParticle
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &581485525
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 581485524}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 557679281220c3d43a1346bec6e6e3c7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  gravitationalConstant: 9.8
+  center: {x: 3, y: 3.5, z: 0}
+  particleCount: 20000
+  particleIndices: 
+  particleCellIndices: 
+  cellOffsets: 
+  pressures: []
+  densities: []
+  velocities: []
+  currentForces: []
+  positions: []
+  visualizeParticles: 1
+  visualizeGrid: 0
+  particleSize: 0.3
+  dispersionAmount: 5
+  startVelocity: {x: 2, y: 4, z: 5}
+  smoothingLength: 3
+  restingDensity: 30
+  stiffnessConstant: 6
+  viscosityCoefficient: 1
+  volume: 0.9
+  molarMass: 0.18
+  boundsSize: {x: 100, y: 20, z: 100}
+  boundsPosition: {x: 0, y: 0, z: 0}
+  collisionDamping: 0.7
+  marchingCube: {fileID: 0}
+  kernelCount: 7
+  computeShader: {fileID: 7200000, guid: 00be0fca879205444a1846b376513bfa, type: 3}
+--- !u!4 &581485526
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 581485524}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 28.762983, y: -547.60706, z: -896.255}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -421,7 +493,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1497104611
 Transform:
   m_ObjectHideFlags: 0
@@ -587,3 +659,4 @@ SceneRoots:
   - {fileID: 1497104611}
   - {fileID: 1656643067}
   - {fileID: 76769190}
+  - {fileID: 581485526}

@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UIElements;
 
 public class ParticleSimulator : MonoBehaviour
 {
@@ -40,6 +39,7 @@ public class ParticleSimulator : MonoBehaviour
     // Grid properties
     private float cellSize;
     private Dictionary<Vector3Int, List<int>> grid;
+    public Dictionary<Vector3Int, List<int>> gridPositions;
 
     void Start()
     {
@@ -98,6 +98,9 @@ public class ParticleSimulator : MonoBehaviour
             //marchingCube.SetParticleHeight(new Vector3(cell.x * cellSize, cell.y * cellSize, cell.z * cellSize));
             marchingCube.SetParticleHeight(grid);
         }
+
+        float[,,] field = GenerateScalarField(positions, new Vector3Int((int)(boundsSize.x / cellSize), (int)(boundsSize.y / cellSize), (int)(boundsSize.z / cellSize)), 0, smoothingLength);
+        marchingCube.SetScalarField(field);
         marchingCube.MarchCubesPosition();
         marchingCube.SetMesh();
         UpdateDensity();
@@ -341,5 +344,73 @@ public class ParticleSimulator : MonoBehaviour
     public float GetParticleDensity(int index)
     {
         return densities[index];
+    }
+
+    public Vector3Int GetCellInBoundary(Vector3 position)
+    {
+        Vector3 _boundsPosition = new Vector3(
+            boundsPosition.x - (boundsSize.x / 2),
+            boundsPosition.y - (boundsSize.y / 2),
+            boundsPosition.z - (boundsSize.z / 2)
+            );
+        float x = (position.x - _boundsPosition.x) / cellSize;
+        float y = (position.y - _boundsPosition.y) / cellSize;
+        float z = (position.z - _boundsPosition.z) / cellSize;
+
+        int gridX = Mathf.FloorToInt(x);
+        int gridY = Mathf.FloorToInt(y);
+        int gridZ = Mathf.FloorToInt(z);
+
+        return new Vector3Int(gridX, gridY, gridZ);
+    }
+
+    public Vector3 GetCellInWorld(Vector3Int position)
+    {
+        Vector3 _boundsPosition = new Vector3(
+            boundsPosition.x - (boundsSize.x / 2),
+            boundsPosition.y - (boundsSize.y / 2),
+            boundsPosition.z - (boundsSize.z / 2)
+            );
+
+        float x = (position.x * cellSize) + _boundsPosition.x;
+        float y = (position.y * cellSize) + _boundsPosition.y;
+        float z = (position.z * cellSize) + _boundsPosition.z;
+
+        return new Vector3(x, y, z);
+    }
+
+    private float[,,] GenerateScalarField(Vector3[] positions, Vector3Int gridResolution, float gridSize, float particleRadius)
+    {
+        float[,,] scalarField = new float[gridResolution.x + 1, gridResolution.y + 1, gridResolution.z + 1];
+        float halfGridSize = gridSize / 2;
+
+        foreach (var position in positions)
+        {
+            Vector3Int gridPos = GetCellInBoundary(position);
+            int x = Mathf.Clamp((int)gridPos.x, 0, gridResolution.x - 1);
+            int y = Mathf.Clamp((int)gridPos.y, 0, gridResolution.y - 1);
+            int z = Mathf.Clamp((int)gridPos.z, 0, gridResolution.z - 1);
+
+            // Apply a kernel function to spread density contributions
+            for (int i = -1; i <= 1; i++)
+            {
+                for (int j = -1; j <= 1; j++)
+                {
+                    for (int k = -1; k <= 1; k++)
+                    {
+                        int nx = gridPos.x + i;
+                        int ny = gridPos.y + j;
+                        int nz = gridPos.z + k;
+
+                        if (nx >= 0 && nx < gridResolution.x && ny >= 0 && ny < gridResolution.y && nz >= 0 && nz < gridResolution.z)
+                        {
+                            float distance = Vector3.Distance(position, new Vector3(nx, ny, nz)) /* ((gridResolution.magnitude - 1) * gridSize - halfGridSize))*/;
+                            scalarField[nx, ny, nz] += Mathf.Exp(-distance * distance / (2 * particleRadius * particleRadius));
+                        }
+                    }
+                }
+            }
+        }
+        return scalarField;
     }
 }

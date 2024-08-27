@@ -1,0 +1,359 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel MoveParticles
+#pragma kernel UpdateDensity
+#pragma kernel UpdatePressure
+#pragma kernel ComputeForces
+#pragma kernel HashParticles
+#pragma kernel BitonicSort
+#pragma kernel CalculateCellOffsets
+
+#define NUM_OF_THREADS 256
+
+
+// Particle properties
+RWStructuredBuffer<float3> positions;
+RWStructuredBuffer<float3> velocities;
+RWStructuredBuffer<float> pressures;
+RWStructuredBuffer<float> densities;
+RWStructuredBuffer<float3> forces;
+RWStructuredBuffer<uint> cellOffsets;
+RWStructuredBuffer<uint> particleIndices;
+RWStructuredBuffer<uint> particleCellIndices;
+
+
+int numOfParticles;
+
+float deltaTime;
+float3 down;
+
+// Constants
+float smoothingLength;
+float molarMass;
+float particleSize;
+float gravitationalConstant;
+float3 boundsPosition;
+float3 boundsSize;
+float collisionDamping;
+float stiffnessConstant;
+float restingDensity;
+float viscosityCoefficient;
+
+// BitonicSort parameters
+int block;
+int dim;
+
+
+//Trying to add a hash grid
+struct Grid
+{
+    RWStructuredBuffer<uint> particleIndices;
+};
+
+
+
+
+float SmoothingKernel(float smoothingLength, float distance)
+{
+    float q = distance / smoothingLength;
+    float sigma = 315.0f / (64.0f * 3.14159 * pow(smoothingLength, 9));
+    if (q >= 0 && q <= 1)
+    {
+        return sigma * pow((smoothingLength * smoothingLength - distance * distance), 3);
+    }
+    return 0;
+}
+
+float PressureKernelGradient(float smoothingLength, float distance)
+{
+    float q = distance / smoothingLength;
+    if (q >= 0 && q <= 1)
+    {
+        return -45.0f / (3.14159 * pow(smoothingLength, 6)) * pow(1 - q, 2);
+    }
+    return 0;
+}
+
+float ViscosityKernelLaplacian(float smoothingLength, float distance)
+{
+    float q = distance / smoothingLength;
+    if (q >= 0 && q <= 1)
+    {
+        return 45.0f / (3.14159 * pow(smoothingLength, 6)) * (1 - q);
+    }
+    return 0;
+}
+
+float3 ComputeViscosityForce(int i, int j, float distance)
+{
+    float3 velocityDiff = velocities[j] - velocities[i];
+    float laplacian = ViscosityKernelLaplacian(smoothingLength, distance);
+    return viscosityCoefficient * (velocityDiff / densities[j]) * laplacian;
+}
+
+float PressureEquation(float density)
+{
+    return stiffnessConstant * (density - restingDensity); //P = k(p - p0)
+}
+
+void ResloveBoundsCollision(float3 pos, float3 vel, int i)
+{
+    {
+        float3 halfBoundsSize = boundsSize / 2;
+
+        if (pos.x - particleSize < boundsPosition.x - halfBoundsSize.x)
+        {
+            pos.x = boundsPosition.x - halfBoundsSize.x + particleSize;
+            vel.x *= -collisionDamping;
+        }
+        else if (pos.x + particleSize > boundsPosition.x + halfBoundsSize.x)
+        {
+            pos.x = boundsPosition.x + halfBoundsSize.x - particleSize;
+            vel.x *= -collisionDamping;
+        }
+
+        if (pos.y - particleSize < boundsPosition.y - halfBoundsSize.y)
+        {
+            pos.y = boundsPosition.y - halfBoundsSize.y + particleSize;
+            vel.y *= -collisionDamping;
+        }
+        else if (pos.y + particleSize > boundsPosition.y + halfBoundsSize.y)
+        {
+            pos.y = boundsPosition.y + halfBoundsSize.y - particleSize;
+            vel.y *= -collisionDamping;
+        }
+
+        if (pos.z - particleSize < boundsPosition.z - halfBoundsSize.z)
+        {
+            pos.z = boundsPosition.z - halfBoundsSize.z + particleSize;
+            vel.z *= -collisionDamping;
+        }
+        else if (pos.z + particleSize > boundsPosition.z + halfBoundsSize.z)
+        {
+            pos.z = boundsPosition.z + halfBoundsSize.z - particleSize;
+            vel.z *= -collisionDamping;
+        }
+        
+        positions[i] = pos;
+        velocities[i] = vel;
+    }
+}
+
+// optimization
+int3 GetCell(float3 position)
+{
+    float3 boundsOrigin = float3(
+            boundsPosition.x - (boundsSize.x / 2),
+            boundsPosition.y - (boundsSize.y / 2),
+            boundsPosition.z - (boundsSize.z / 2)
+            );
+    
+    float x = (position.x - boundsOrigin.x) / smoothingLength;
+    float y = (position.y - boundsOrigin.y) / smoothingLength;
+    float z = (position.z - boundsOrigin.z) / smoothingLength;
+    
+    return int3(x, y, z);
+    
+    //float3 halfS = boundsSize / 2;
+    
+    //return int3((position.x - halfS.x) / smoothingLength,
+    //    (position.y - halfS.y) / smoothingLength,
+    //    (position.z - halfS.z) / smoothingLength);
+}
+
+inline uint HashCell(in int3 cellIndex)
+{
+    const uint p1 = 73856093;
+    const uint p2 = 19349663;
+    const uint p3 = 83492791;
+
+    int n = p1 * cellIndex.x * p2 ^ cellIndex.y ^ p3 * cellIndex.z;
+    n %= numOfParticles;
+    return n;
+}
+
+[numthreads(NUM_OF_THREADS, 1, 1)]
+void HashParticles(uint3 id : SV_DISPATCHTHREADID)
+{
+    cellOffsets[id.x] = 99999999;
+
+    uint particleIndex = particleIndices[id.x];
+    particleCellIndices[particleIndex] = HashCell(GetCell(positions[particleIndex]));
+}
+
+[numthreads(NUM_OF_THREADS, 1, 1)]
+void BitonicSort(uint3 id : SV_DISPATCHTHREADID)
+{
+    uint i = id.x + id.y * 256 * 1024;
+    uint j = i ^ block;
+
+    if (j < i || i >= numOfParticles) 
+        return;
+	
+    uint key_i = particleIndices[i];
+    uint key_j = particleIndices[j];
+    float value_i = particleCellIndices[key_i];
+    float value_j = particleCellIndices[key_j];
+	
+    float diff = (value_i - value_j) * ((i & dim) == 0 ? 1 : -1);
+    if (diff > 0)
+    {
+        particleIndices[i] = key_j;
+        particleIndices[j] = key_i;
+    }
+}
+
+[numthreads(NUM_OF_THREADS, 1, 1)]
+void CalculateCellOffsets(uint3 id : SV_DISPATCHTHREADID)
+{
+    uint particleIndex = particleIndices[id.x];
+    uint cellIndex = particleCellIndices[particleIndex];
+
+    InterlockedMin(cellOffsets[cellIndex], id.x);
+}
+
+[numthreads(NUM_OF_THREADS, 1, 1)]
+void MoveParticles(uint3 id : SV_DispatchThreadID)
+{
+    velocities[id.x] += forces[id.x] * deltaTime;
+    velocities[id.x] += down * gravitationalConstant * deltaTime; // Apply gravity
+
+            // Update positions
+    positions[id.x] += velocities[id.x] * deltaTime;
+    
+    ResloveBoundsCollision(positions[id.x], velocities[id.x], id.x);
+}
+
+[numthreads(NUM_OF_THREADS,1,1)]
+void UpdateDensity(uint3 id : SV_DispatchThreadID)
+{
+    uint particleIndex = particleIndices[id.x];
+
+    int3 cellIndex = GetCell(positions[particleIndex]);
+    float3 origin = positions[particleIndex];
+    float density = 0;
+    
+    for (int i = -1; i <= 1; ++i)
+    {
+        for (int j = -1; j <= 1; ++j)
+        {
+            for (int k = -1; k <= 1; ++k)
+            {
+                int3 neighbourIndex = cellIndex + int3(i, j, k);
+                uint hashedNeighbourIndex = HashCell(neighbourIndex);
+                uint neighbourIterator = cellOffsets[hashedNeighbourIndex];
+                
+                while (neighbourIterator != 99999999 && neighbourIterator < numOfParticles)
+                {
+                    uint particleIndexB = particleIndices[neighbourIterator];
+                    
+                    if (particleCellIndices[particleIndexB] != hashedNeighbourIndex)
+                    {
+                        break;
+                    }
+                    
+                    float3 d = (positions[particleIndex] - positions[particleIndexB]);
+        
+                    float distance = sqrt((d.x * d.x) + (d.y * d.y) + (d.z * d.z));
+        
+                    if (distance < smoothingLength)
+                    {
+                        density += molarMass * SmoothingKernel(smoothingLength, distance);
+                    }
+                    
+                    neighbourIterator++;
+                }
+
+            }
+        }
+    }
+    
+    densities[particleIndex] = density;
+}
+
+
+[numthreads(NUM_OF_THREADS, 1, 1)]
+void UpdatePressure(uint3 id : SV_DispatchThreadID)
+{
+    uint particleIndex = particleIndices[id.x];
+    pressures[particleIndex] = PressureEquation(densities[particleIndex]);
+}
+
+[numthreads(NUM_OF_THREADS, 1, 1)]
+void ComputeForces(uint3 id : SV_DispatchThreadID)
+{
+    float3 force = float3(0, 0, 0);
+    uint particleIndex = particleIndices[id.x];
+    int3 cellIndex = GetCell(positions[particleIndex]);
+    float3 origin = positions[particleIndex];
+    
+    for (int i = -1; i <= 1; ++i)
+    {
+        for (int j = -1; j <= 1; ++j)
+        {
+            for (int k = -1; k <= 1; ++k)
+            {
+                int3 neighbourIndex = cellIndex + int3(i, j, k);
+                uint hashedNeighbourIndex = HashCell(neighbourIndex);
+
+                uint neighbourIterator = cellOffsets[hashedNeighbourIndex];
+
+                while (neighbourIterator != 99999999 && neighbourIterator < numOfParticles)
+                {
+                    uint particleIndexB = particleIndices[neighbourIterator];
+                    if (particleCellIndices[particleIndexB] != hashedNeighbourIndex)
+                    {
+                        break;
+                    }
+                    
+                    if (origin.x == positions[particleIndexB].x && origin.y == positions[particleIndexB].y && origin.z == positions[particleIndexB].z)
+                    {
+                        neighbourIterator++;
+                        continue;
+                    }
+                    
+                    //float dist = distance(positions[particleIndexB], origin);
+                    //if (dist < smoothingLength * 2)
+                    //{
+                    //    float3 dir = (positions[particleIndexB] - positions[particleIndex]);
+                    //    float3 norm = sqrt((dir.x * dir.x) + (dir.y * dir.y) + (dir.z * dir.z));
+                
+                    //    dir.x = dir.x / norm.x;
+                    //    dir.y = dir.y / norm.y;
+                    //    dir.z = dir.z / norm.z;
+
+                    //        // Pressure force
+                    //    float pressureForce = -(pressures[particleIndex] + pressures[particleIndexB]) / (2.0f * densities[particleIndexB]) * PressureKernelGradient(smoothingLength, dist);
+                    //    force += dir * pressureForce;
+
+                    //        // Viscosity force
+                    //    force += ComputeViscosityForce(particleIndex, particleIndexB, dist);
+                    //}
+                    
+                    float3 d = (positions[particleIndex] - positions[particleIndexB]);
+        
+                    float distance = sqrt((d.x * d.x) + (d.y * d.y) + (d.z * d.z));
+        
+                    if (distance < smoothingLength)
+                    {
+                        float3 dir = (positions[particleIndexB] - positions[particleIndex]);
+                        float3 norm = sqrt((dir.x * dir.x) + (dir.y * dir.y) + (dir.z * dir.z));
+                
+                        dir.x = dir.x / norm.x;
+                        dir.y = dir.y / norm.y;
+                        dir.z = dir.z / norm.z;
+
+                        // Pressure force
+                        float pressureForce = -(pressures[particleIndex] + pressures[particleIndexB]) / (2.0f * densities[particleIndexB]) * PressureKernelGradient(smoothingLength, distance);
+                        force += dir * pressureForce;
+
+                        // Viscosity force
+                        force += ComputeViscosityForce(particleIndex, particleIndexB, distance);
+                    }
+                    neighbourIterator++;
+                }
+            }
+        }
+    }
+    
+    forces[particleIndex] = force;
+}

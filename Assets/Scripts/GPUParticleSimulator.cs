@@ -3,16 +3,13 @@ using UnityEngine;
 
 public class GPUParticleSimulator : MonoBehaviour
 {
-    public const int NUM_OF_THREADS = 256;
+    public const int NUM_OF_THREADS = 16;
     [Header("World Values")]
     public float gravitationalConstant = 9.8f;
     public Vector3 center;
 
     [Header("Particle Properties")]
     public int particleCount;
-    public int[] particleIndices;
-    public int[] particleCellIndices;
-    public int[] cellOffsets;
     public float[] pressures;
     public float[] densities;
     public Vector3[] velocities;
@@ -48,9 +45,6 @@ public class GPUParticleSimulator : MonoBehaviour
     ComputeBuffer pressuresBuffer;
     ComputeBuffer densitiesBuffer;
     ComputeBuffer forcesBuffer;
-    ComputeBuffer cellOffsetsBuffer;
-    ComputeBuffer particleIndicesBuffer;
-    ComputeBuffer particleCellIndicesBuffer;
 
     void Start()
     {
@@ -60,9 +54,6 @@ public class GPUParticleSimulator : MonoBehaviour
         pressures = new float[particleCount];
         densities = new float[particleCount];
         currentForces = new Vector3[particleCount];
-        particleIndices = new int[particleCount];
-        particleCellIndices = new int[particleCount];
-        cellOffsets = new int[particleCount];
 
         int particlesPerAxis = (int)Math.Cbrt(particleCount);
         int i = 0;
@@ -82,7 +73,6 @@ public class GPUParticleSimulator : MonoBehaviour
                     Vector3 jitter = UnityEngine.Random.insideUnitSphere * dispersionAmount;
                     positions[i] = new Vector3(px, py, pz) + jitter;
                     velocities[i] = startVelocity;
-                    particleIndices[i] = i;
                     i++;
                 }
             }
@@ -95,9 +85,6 @@ public class GPUParticleSimulator : MonoBehaviour
         pressuresBuffer = new ComputeBuffer(particleCount, sizeof(float));
         densitiesBuffer = new ComputeBuffer(particleCount, sizeof(float));
         forcesBuffer = new ComputeBuffer(particleCount, sizeof(float) * 3);
-        particleCellIndicesBuffer = new ComputeBuffer(particleCount, sizeof(int));
-        particleIndicesBuffer = new ComputeBuffer(particleCount, sizeof(int));
-        cellOffsetsBuffer = new ComputeBuffer(particleCount, sizeof(int));
 
         // Set initial data
         positionsBuffer.SetData(positions);
@@ -105,10 +92,6 @@ public class GPUParticleSimulator : MonoBehaviour
         pressuresBuffer.SetData(pressures);
         densitiesBuffer.SetData(densities);
         forcesBuffer.SetData(currentForces);
-        particleIndicesBuffer.SetData(particleIndices);
-        particleCellIndicesBuffer.SetData(particleCellIndices);
-        cellOffsetsBuffer.SetData(cellOffsets);
-
 
         computeShader.SetFloats("down", new float[] { 0, -1, 0 });
 
@@ -121,9 +104,6 @@ public class GPUParticleSimulator : MonoBehaviour
             computeShader.SetBuffer(k, "pressures", pressuresBuffer);
             computeShader.SetBuffer(k, "densities", densitiesBuffer);
             computeShader.SetBuffer(k, "forces", forcesBuffer);
-            computeShader.SetBuffer(k, "cellOffsets", cellOffsetsBuffer);
-            computeShader.SetBuffer(k, "particleIndices", particleIndicesBuffer);
-            computeShader.SetBuffer(k, "particleCellIndices", particleCellIndicesBuffer);
         }
         
     }
@@ -143,35 +123,21 @@ public class GPUParticleSimulator : MonoBehaviour
         computeShader.SetFloats("boundsSize", new float[] { boundsSize.x, boundsSize.y, boundsSize.z });
         computeShader.SetFloat("deltaTime", Time.deltaTime);
 
-        computeShader.Dispatch(computeShader.FindKernel("HashParticles"), particleCount / NUM_OF_THREADS, 1, 1);
-        SortParticles();
-        computeShader.Dispatch(computeShader.FindKernel("CalculateCellOffsets"), particleCount / NUM_OF_THREADS, 1, 1);
+        //computeShader.Dispatch(computeShader.FindKernel("HashParticles"), particleCount / NUM_OF_THREADS, 1, 1);
+        //SortParticles();
+        //computeShader.Dispatch(computeShader.FindKernel("CalculateCellOffsets"), particleCount / NUM_OF_THREADS, 1, 1);
 
         // Dispatch the compute shader
-        computeShader.Dispatch(computeShader.FindKernel("UpdateDensity"), particleCount / NUM_OF_THREADS, 1, 1);
+        computeShader.Dispatch(computeShader.FindKernel("UpdateDensity"), particleCount/NUM_OF_THREADS, 1, 1);
         computeShader.Dispatch(computeShader.FindKernel("UpdatePressure"), particleCount / NUM_OF_THREADS, 1, 1);
-        computeShader.Dispatch(computeShader.FindKernel("ComputeForces"), particleCount / NUM_OF_THREADS, 1, 1);
-        computeShader.Dispatch(computeShader.FindKernel("MoveParticles"), particleCount / NUM_OF_THREADS, 1, 1);
+        computeShader.Dispatch(computeShader.FindKernel("ComputeForces"), particleCount/NUM_OF_THREADS, 1, 1);
+        computeShader.Dispatch(computeShader.FindKernel("MoveParticles"), particleCount/NUM_OF_THREADS, 1, 1);
 
         // Optionally, read back data from GPU
         positionsBuffer.GetData(positions);
         velocitiesBuffer.GetData(velocities);
         forcesBuffer.GetData(currentForces);
         densitiesBuffer.GetData(densities);
-
-    }
-
-    private void SortParticles()
-    {
-        for (var dim = 2; dim <= particleCount; dim <<= 1)
-        {
-            computeShader.SetInt("dim", dim);
-            for (var block = dim >> 1; block > 0; block >>= 1)
-            {
-                computeShader.SetInt("block", block);
-                computeShader.Dispatch(computeShader.FindKernel("BitonicSort"), particleCount / NUM_OF_THREADS, 1, 1);
-            }
-        }
     }
 
     private void OnDrawGizmos()

@@ -138,7 +138,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &76769187
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -250,10 +250,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   gravitationalConstant: 9.8
   center: {x: 3, y: 3.5, z: 0}
-  particleCount: 20000
-  particleIndices: 
-  particleCellIndices: 
-  cellOffsets: 
+  particleCount: 100
   pressures: []
   densities: []
   velocities: []
@@ -274,7 +271,7 @@ MonoBehaviour:
   boundsPosition: {x: 0, y: 0, z: 0}
   collisionDamping: 0.7
   marchingCube: {fileID: 0}
-  kernelCount: 7
+  kernelCount: 4
   computeShader: {fileID: 7200000, guid: 00be0fca879205444a1846b376513bfa, type: 3}
 --- !u!4 &581485526
 Transform:
@@ -523,7 +520,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   gravitationalConstant: 9.8
   center: {x: 3, y: 3.5, z: 0}
-  particleCount: 2000
+  particleCount: 10000
   pressures: []
   densities: []
   velocities: []

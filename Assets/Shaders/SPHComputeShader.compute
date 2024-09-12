@@ -3,8 +3,11 @@
 #pragma kernel UpdateDensity
 #pragma kernel UpdatePressure
 #pragma kernel ComputeForces
+#pragma kernel UpdateSpatialHash
+#pragma kernel Sort
+#pragma kernel CalculateOffsets
 
-#define NUM_OF_THREADS 16
+#define NUM_OF_THREADS 1024
 
 
 // Particle properties
@@ -13,6 +16,9 @@ RWStructuredBuffer<float3> velocities;
 RWStructuredBuffer<float> pressures;
 RWStructuredBuffer<float> densities;
 RWStructuredBuffer<float3> forces;
+
+RWStructuredBuffer<uint3> spatialIndices; // used for spatial hashing
+RWStructuredBuffer<uint> spatialOffsets; // used for spatial hashing
 
 
 int numOfParticles;
@@ -31,6 +37,82 @@ float collisionDamping;
 float stiffnessConstant;
 float restingDensity;
 float viscosityCoefficient;
+
+//collision box
+float3 boxPos;
+float3 boxMin;
+float3 boxMax;
+float boxScale;
+bool computeBox;
+
+
+struct Entry
+{
+    uint originalIndex;
+    uint hash;
+    uint key;
+};
+
+RWStructuredBuffer<Entry> Entries;
+const uint numEntries;
+const uint groupWidth;
+const uint groupHeight;
+const uint stepIndex;
+
+static const int3 offsets3D[27] =
+{
+    int3(-1, -1, -1),
+	int3(-1, -1, 0),
+	int3(-1, -1, 1),
+	int3(-1, 0, -1),
+	int3(-1, 0, 0),
+	int3(-1, 0, 1),
+	int3(-1, 1, -1),
+	int3(-1, 1, 0),
+	int3(-1, 1, 1),
+	int3(0, -1, -1),
+	int3(0, -1, 0),
+	int3(0, -1, 1),
+	int3(0, 0, -1),
+	int3(0, 0, 0),
+	int3(0, 0, 1),
+	int3(0, 1, -1),
+	int3(0, 1, 0),
+	int3(0, 1, 1),
+	int3(1, -1, -1),
+	int3(1, -1, 0),
+	int3(1, -1, 1),
+	int3(1, 0, -1),
+	int3(1, 0, 0),
+	int3(1, 0, 1),
+	int3(1, 1, -1),
+	int3(1, 1, 0),
+	int3(1, 1, 1)
+};
+
+// Constants used for hashing
+static const uint hashK1 = 15823;
+static const uint hashK2 = 9737333;
+static const uint hashK3 = 440817757;
+
+// Convert floating point position into an integer cell coordinate
+int3 GetCell3D(float3 position, float radius)
+{
+    return (int3) floor(position / radius);
+}
+
+// Hash cell coordinate to a single unsigned integer
+uint HashCell3D(int3 cell)
+{
+    cell = (uint3) cell;
+    return (cell.x * hashK1) + (cell.y * hashK2) + (cell.z * hashK3);
+}
+
+uint KeyFromHash(uint hash, uint tableSize)
+{
+    return hash % tableSize;
+}
+
 
 
 float SmoothingKernel(float smoothingLength, float distance)
@@ -76,48 +158,114 @@ float PressureEquation(float density)
     return stiffnessConstant * (density - restingDensity); //P = k(p - p0)
 }
 
-void ResloveBoundsCollision(float3 pos, float3 vel, int i)
+void ResolveBoundsCollision(float3 pos, float3 vel, int i)
 {
+    float3 halfBoundsSize = boundsSize / 2;
+
+    if (pos.x - particleSize < boundsPosition.x - halfBoundsSize.x)
     {
-        float3 halfBoundsSize = boundsSize / 2;
+        pos.x = boundsPosition.x - halfBoundsSize.x + particleSize;
+        vel.x *= -collisionDamping;
+    }
+    else if (pos.x + particleSize > boundsPosition.x + halfBoundsSize.x)
+    {
+        pos.x = boundsPosition.x + halfBoundsSize.x - particleSize;
+        vel.x *= -collisionDamping;
+    }
 
-        if (pos.x - particleSize < boundsPosition.x - halfBoundsSize.x)
+    if (pos.y - particleSize < boundsPosition.y - halfBoundsSize.y)
+    {
+        pos.y = boundsPosition.y - halfBoundsSize.y + particleSize;
+        vel.y *= -collisionDamping;
+    }
+    else if (pos.y + particleSize > boundsPosition.y + halfBoundsSize.y)
+    {
+        pos.y = boundsPosition.y + halfBoundsSize.y - particleSize;
+        vel.y *= -collisionDamping;
+    }
+
+    if (pos.z - particleSize < boundsPosition.z - halfBoundsSize.z)
+    {
+        pos.z = boundsPosition.z - halfBoundsSize.z + particleSize;
+        vel.z *= -collisionDamping;
+    }
+    else if (pos.z + particleSize > boundsPosition.z + halfBoundsSize.z)
+    {
+        pos.z = boundsPosition.z + halfBoundsSize.z - particleSize;
+        vel.z *= -collisionDamping;
+    }
+        
+    positions[i] = pos;
+    velocities[i] = vel;
+}
+
+void ResolveBoxCollision(float3 pos, float3 vel, int i)
+{
+    if (distance(pos, boxPos) <= boxScale)
+    {
+            // Check each axis and correct the particle's position and velocity
+        if (pos.x >= boxMin.x + particleSize && pos.x < boxPos.x)
         {
-            pos.x = boundsPosition.x - halfBoundsSize.x + particleSize;
-            vel.x *= -collisionDamping;
+            pos.x = boxMin.x - particleSize; //- boundaryOffset;  // Move particle just outside the box
+            if (vel.x < 0)
+                vel.x *= -collisionDamping; // Reverse velocity if moving toward the box
         }
-        else if (pos.x + particleSize > boundsPosition.x + halfBoundsSize.x)
+        else if (pos.x <= boxMax.x - particleSize && pos.x > boxPos.x)
         {
-            pos.x = boundsPosition.x + halfBoundsSize.x - particleSize;
-            vel.x *= -collisionDamping;
+            pos.x = boxMax.x + particleSize; //+ boundaryOffset;  // Move particle just outside the box
+            if (vel.x > 0)
+                vel.x *= -collisionDamping; // Reverse velocity if moving toward the box
         }
 
-        if (pos.y - particleSize < boundsPosition.y - halfBoundsSize.y)
+        if (pos.y >= boxMin.y + particleSize && pos.y < boxPos.y)
         {
-            pos.y = boundsPosition.y - halfBoundsSize.y + particleSize;
-            vel.y *= -collisionDamping;
+            pos.y = boxMin.y - particleSize; //- boundaryOffset;
+            if (vel.y < 0)
+                vel.y *= -collisionDamping;
         }
-        else if (pos.y + particleSize > boundsPosition.y + halfBoundsSize.y)
+        else if (pos.y <= boxMax.y - particleSize && pos.y > boxPos.y)
         {
-            pos.y = boundsPosition.y + halfBoundsSize.y - particleSize;
-            vel.y *= -collisionDamping;
+            pos.y = boxMax.y + particleSize; //+ boundaryOffset;
+            if (vel.y > 0)
+                vel.y *= -collisionDamping;
         }
 
-        if (pos.z - particleSize < boundsPosition.z - halfBoundsSize.z)
+        if (pos.z >= boxMin.z + particleSize && pos.z < boxPos.z)
         {
-            pos.z = boundsPosition.z - halfBoundsSize.z + particleSize;
-            vel.z *= -collisionDamping;
+            pos.z = boxMin.z - particleSize; //- boundaryOffset;
+            if (vel.z < 0)
+                vel.z *= -collisionDamping;
         }
-        else if (pos.z + particleSize > boundsPosition.z + halfBoundsSize.z)
+        else if (pos.z <= boxMax.z - particleSize && pos.z > boxPos.z)
         {
-            pos.z = boundsPosition.z + halfBoundsSize.z - particleSize;
-            vel.z *= -collisionDamping;
+            pos.z = boxMax.z + particleSize; //+ boundaryOffset;
+            if (vel.z > 0)
+                vel.z *= -collisionDamping;
         }
         
         positions[i] = pos;
         velocities[i] = vel;
     }
 }
+
+[numthreads(NUM_OF_THREADS, 1, 1)]
+void UpdateSpatialHash(uint3 id : SV_DispatchThreadID)
+{
+    //credit https://github.com/SebLague/Fluid-Sim/tree/main
+    
+    if (id.x >= numOfParticles)
+        return;
+
+	// Reset offsets
+    spatialOffsets[id.x] = numOfParticles;
+	// Update index buffer
+    uint index = id.x;
+    int3 cell = GetCell3D(positions[index], smoothingLength);
+    uint hash = HashCell3D(cell);
+    uint key = KeyFromHash(hash, numOfParticles);
+    spatialIndices[id.x] = uint3(index, hash, key);
+}
+
 
 [numthreads(NUM_OF_THREADS, 1, 1)]
 void MoveParticles(uint3 id : SV_DispatchThreadID)
@@ -128,26 +276,50 @@ void MoveParticles(uint3 id : SV_DispatchThreadID)
             // Update positions
     positions[id.x] += velocities[id.x] * deltaTime;
     
-    ResloveBoundsCollision(positions[id.x], velocities[id.x], id.x);
+    ResolveBoundsCollision(positions[id.x], velocities[id.x], id.x);
+    if (computeBox)
+        ResolveBoxCollision(positions[id.x], velocities[id.x], id.x);
+
 }
 
 [numthreads(NUM_OF_THREADS,1,1)]
 void UpdateDensity(uint3 id : SV_DispatchThreadID)
 {
-
+    if (id.x >= numOfParticles)
+        return;
+    
+    float3 pos = positions[id.x];
+    int3 originCell = GetCell3D(pos, smoothingLength);
     float density = 0;
     
-    for (int i = 0; i < numOfParticles; i++)
+    for (int i = 0; i < 27; i++)
     {
-        float3 d = (positions[id.x] - positions[i]);
-        
-        float distance = sqrt((d.x * d.x) + (d.y * d.y) + (d.z * d.z));
-        
-        if (distance < smoothingLength)
+        uint hash = HashCell3D(originCell + offsets3D[i]);
+        uint key = KeyFromHash(hash, numOfParticles);
+        uint currIndex = spatialOffsets[key];
+
+        while (currIndex < numOfParticles)
         {
-            density += molarMass * SmoothingKernel(smoothingLength, distance);
-        }
+            uint3 indexData = spatialIndices[currIndex];
+            currIndex++;
+			// Exit if no longer looking at correct bin
+            if (indexData[2] != key)
+                break;
+			// Skip if hash does not match
+            if (indexData[1] != hash)
+                continue;
+
+            uint neighbourIndex = indexData[0];
+            float3 neighbourPos = positions[neighbourIndex];
+            float3 d = (positions[id.x] - neighbourPos);
         
+            float distance = sqrt((d.x * d.x) + (d.y * d.y) + (d.z * d.z));
+        
+            if (distance < smoothingLength)
+            {
+                density += molarMass * SmoothingKernel(smoothingLength, distance);
+            }
+        }
     }         
     densities[id.x] = density;
 }
@@ -163,19 +335,45 @@ void UpdatePressure(uint3 id : SV_DispatchThreadID)
 [numthreads(NUM_OF_THREADS, 1, 1)]
 void ComputeForces(uint3 id : SV_DispatchThreadID)
 {
+    if (id.x >= numOfParticles)
+        return;
+    
+    float3 pos = positions[id.x];
+    int3 originCell = GetCell3D(pos, smoothingLength);
+    
     float3 force = float3(0, 0, 0);
     
-    for (int i = 0; i < numOfParticles; i++)
+    for (int i = 0; i < 27; i++)
     {
-        if(id.x != i)
+        uint hash = HashCell3D(originCell + offsets3D[i]);
+        uint key = KeyFromHash(hash, numOfParticles);
+        uint currIndex = spatialOffsets[key];
+
+        while (currIndex < numOfParticles)
         {
-            float3 d = (positions[id.x] - positions[i]);
+            uint3 indexData = spatialIndices[currIndex];
+            currIndex++;
+			// Exit if no longer looking at correct bin
+            if (indexData[2] != key)
+                break;
+			// Skip if hash does not match
+            if (indexData[1] != hash)
+                continue;
+
+            uint neighbourIndex = indexData[0];
+            
+            if (neighbourIndex == id.x)
+                continue;
+            
+            float3 neighbourPos = positions[neighbourIndex];
+            
+            float3 d = (positions[id.x] - neighbourPos);
         
             float distance = sqrt((d.x * d.x) + (d.y * d.y) + (d.z * d.z));
         
             if (distance < smoothingLength)
             {
-                float3 dir = (positions[i] - positions[id.x]);
+                float3 dir = (positions[neighbourIndex] - positions[id.x]);
                 float3 norm = sqrt((dir.x * dir.x) + (dir.y * dir.y) + (dir.z * dir.z));
                 
                 dir.x = dir.x / norm.x;
@@ -183,15 +381,63 @@ void ComputeForces(uint3 id : SV_DispatchThreadID)
                 dir.z = dir.z / norm.z;
 
                         // Pressure force
-                float pressureForce = -(pressures[id.x] + pressures[i]) / (2.0f * densities[i]) * PressureKernelGradient(smoothingLength, distance);
+                float pressureForce = -(pressures[id.x] + pressures[neighbourIndex]) / (2.0f * densities[neighbourIndex]) * PressureKernelGradient(smoothingLength, distance);
                 force += dir * pressureForce;
 
                         // Viscosity force
-                force += ComputeViscosityForce(id.x, i, distance);
+                force += ComputeViscosityForce(id.x, neighbourIndex, distance);
             }
         }
-        
     }
+    
     forces[id.x] = force;
     
+}
+
+[numthreads(NUM_OF_THREADS, 1, 1)]
+void Sort(uint3 id : SV_DispatchThreadID)
+{
+    //Credit https://github.com/SebLague/Fluid-Sim/tree/main
+    
+    uint i = id.x;
+
+    uint hIndex = i & (groupWidth - 1);
+    uint indexLeft = hIndex + (groupHeight + 1) * (i / groupWidth);
+    uint rightStepSize = stepIndex == 0 ? groupHeight - 2 * hIndex : (groupHeight + 1) / 2;
+    uint indexRight = indexLeft + rightStepSize;
+
+	// Exit if out of bounds (for non-power of 2 input sizes)
+    if (indexRight >= numEntries)
+        return;
+
+    uint valueLeft = Entries[indexLeft].key;
+    uint valueRight = Entries[indexRight].key;
+
+	// Swap entries if value is descending
+    if (valueLeft > valueRight)
+    {
+        Entry temp = Entries[indexLeft];
+        Entries[indexLeft] = Entries[indexRight];
+        Entries[indexRight] = temp;
+    }
+}
+
+[numthreads(NUM_OF_THREADS, 1, 1)]
+void CalculateOffsets(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= numEntries)
+    {
+        return;
+    }
+
+    uint i = id.x;
+    uint null = numEntries;
+
+    uint key = Entries[i].key;
+    uint keyPrev = i == 0 ? null : Entries[i - 1].key;
+
+    if (key != keyPrev)
+    {
+        spatialOffsets[key] = i;
+    }
 }
